@@ -4,6 +4,7 @@ declare( strict_types=1 );
 namespace GPT_CPT;
 
 use Automattic\Jetpack\Connection\Client as Jetpack_Client;
+use Jetpack;
 
 class OpenAI_Updater {
 	private $assistant;
@@ -21,17 +22,17 @@ class OpenAI_Updater {
 		}
 
 		$assistant_id = get_post_meta( $post_id, 'assistant_id', true );
-		// $this->maybe_upload_files( $post_id, $post );
-		$assistant_data = $this->prepare_assistant_data( $post_id, $post );
 		if ( 'publish' === $post->post_status ) {
+			$this->maybe_upload_files( $post_id, $post );
+			$assistant_data = $this->prepare_assistant_data( $post_id, $post );
+
 			if ( $assistant_id && $update ) {
 				$result = $this->handle_modify_assistant( $assistant_id, $assistant_data );
 			} else {
 				$result = $this->handle_create_assistant( $post_id, $assistant_data );
 			}
-			// $this->attach_assistant_file( $post_id, $assistant_id );
 		} else {
-			// $this->remove_file_from_openai( $post_id );
+			$this->remove_file_from_openai( $post_id );
 			$result = $this->handle_delete_assistant( $post_id, $assistant_id );
 		}
 
@@ -47,53 +48,117 @@ class OpenAI_Updater {
 		if ( ! is_array( $file_ids ) ) {
 			return;
 		}
+
+		$deleted_file_ids = array();
 		foreach ( $file_ids as $file_id ) {
-			$this->assistant->request_file_delete( $file_id );
+			$file_delete = Jetpack_Client::wpcom_json_api_request_as_user(
+				"/wpcom-ai/files/$file_id/delete?force=wpcom",
+				'v2',
+				array(
+					'method'  => 'POST',
+					'headers' => array( 'content-type' => 'application/json' ),
+				),
+				array(
+					'file_id' => $file_id,
+				),
+				'wpcom'
+			);
+
+			if ( ! is_wp_error( $file_delete ) ) {
+				$deleted_file_ids[] = $file_id;
+			}
 		}
 
 		// Remove the file IDs
-		delete_post_meta( $post_id, 'knowledge_file_ids' );
+		foreach ( $deleted_file_ids as $deleted_file_id ) {
+			$file_ids = array_diff( $file_ids, array( $deleted_file_id ) );
+		}
+		update_post_meta( $post_id, 'knowledge_file_ids', array() );
 	}
 
 	private function maybe_upload_files( $post_id, $post ) {
 		if ( ! $post->post_status === 'publish' ) {
 			return;
 		}
-		// If one with the same name already exists, delete it first
-		$file_path = get_post_meta( $post_id, 'knowledge_file_path', true );
-		$file_name = basename( $file_path );
-		$file_id = $this->assistant->get_file_id_from_file_name( $file_name );
-		if ( $file_id ) {
-			$this->assistant->request_file_delete( $file_id );
+
+		$file_path = Knowledge::get_knowledge_file_path( $post_id );
+		$file_url = Knowledge::get_knowledge_file_url( $post_id );
+
+		if ( ! $file_url || ! file_exists( $file_path ) ) {
+			error_log( 'doesnnt exist' );
+			return;
 		}
-		$file_upload = $this->assistant->request_file_upload( $file_path, $file_name );
+
+		$file_upload = Jetpack_Client::wpcom_json_api_request_as_user(
+			'/wpcom-ai/files?force=wpcom',
+			'v2',
+			array(
+				'method'  => 'POST',
+				'headers' => array( 'content-type' => 'application/json' ),
+			),
+			array(
+				'file' => Knowledge::get_knowledge_file_url( $post_id ),
+				'purpose' => 'assistants',
+			),
+			'wpcom'
+		);
+
 		if ( is_wp_error( $file_upload ) ) {
 			Admin_Notices::set_error_notice( $post_id, 'Failed to upload knowledge file.' );
 			return;
 		}
 
-		if ( $file_upload ) {
-			$file_id = $this->assistant->get_file_id_from_file_name( $file_name );
-			update_post_meta( $post_id, 'knowledge_file_ids', array( $file_id ) );
+		$response = wp_remote_retrieve_body( $file_upload );
+		$response = json_decode( $response );
+
+		if ( $response->error ) {
+			Admin_Notices::set_error_notice( $post_id, 'Failed to upload knowledge file.' );
+			return;
 		}
+
+		update_post_meta( $post_id, 'knowledge_file_url', $file_url );
+		update_post_meta( $post_id, 'knowledge_file_ids', array( $response->id ) );
 	}
 
-	private function attach_assistant_file( $post_id, $assistant_id ) {
-		// Attach the knowledge file to the assistant
-		$file_ids = get_post_meta( $post_id, 'knowledge_file_ids', true );
-		if ( ! is_array( $file_ids ) ) {
-			return;
-		}
-		if ( count( $file_ids ) === 0 ) {
-			return;
+	public function get_file_id_from_file_name( $file_name ) {
+		$files = $this->list_uploaded_files();
+		if ( is_wp_error( $files ) ) {
+			return $files;
 		}
 
-		foreach ( $file_ids as $file_id ) {
-			$attach_request = $this->assistant->request_assistant_add_file( $assistant_id, $file_id );
-			if ( is_wp_error( $attach_request ) ) {
-				Admin_Notices::set_error_notice( $post_id, 'Failed to attach knowledge file' );
+		foreach ( $files as $file ) {
+			if ( $file_name === $file->name ) {
+				return $file->id;
 			}
 		}
+
+		return false;
+	}
+
+	public function list_uploaded_files() {
+		$result = Jetpack_Client::wpcom_json_api_request_as_user(
+			'/wpcom-ai/files?force=wpcom',
+			'v2',
+			array(
+				'method'  => 'GET',
+				'headers' => array( 'content-type' => 'application/json' ),
+			),
+			null,
+			'wpcom'
+		);
+
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		$response = wp_remote_retrieve_body( $result );
+		$response = json_decode( $response );
+
+		if ( $response->error ) {
+			return new \WP_Error( 'failed-to-list-files', 'Failed to list uploaded files.' );
+		}
+
+		return $response->files;
 	}
 
 	private function handle_modify_assistant( $assistant_id, $assistant_data ) {

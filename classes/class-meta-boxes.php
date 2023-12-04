@@ -84,12 +84,18 @@ class Meta_Boxes {
 		$file_ids = get_post_meta( $post->ID, 'knowledge_file_ids', true );
 
 		if ( $file_ids ) {
-			echo '<p>Knowledge File: ' . json_encode( $file_ids ) . '</p>';
+			echo '<p>Knowledge Files:</p>';
 		}
 
 		if ( file_exists( $file_path ) ) {
-			echo '<button type="button" id="openKnowledge">View Knowledge file content</button>';
-			echo '<p>' . esc_html( $this->render_show_knowledge_html() ) . '</p>';
+			$knowledge_file_url = Knowledge::get_knowledge_file_url( $post->ID );
+			echo '<p>Knowledge File: <a href="' . esc_url( $knowledge_file_url ) . '" target="_blank">' . esc_html( $knowledge_file_url ) . '</a></p>';
+
+			// echo knowledge file ids
+			$file_ids = get_post_meta( $post->ID, 'knowledge_file_ids', true );
+			if ( $file_ids ) {
+				echo '<p>Knowledge File IDs: ' . json_encode( $file_ids ) . '</p>';
+			}
 		}
 
 		echo '<label>Post types to include in knowledge:</label>';
@@ -121,15 +127,6 @@ class Meta_Boxes {
 		</li>
 			<?php
 		} // End foreach().
-	}
-
-	private function render_show_knowledge_html() {
-		?>
-		<div id="knowledge" style="display:none;">
-			<div id="knowledgeContent" style="overflow-y: scroll; max-height: 400px;"></div>
-			<button id="closeModalButton">Close</button>
-		</div>
-		<?php
 	}
 
 	/**
@@ -185,21 +182,20 @@ class Meta_Boxes {
 		}
 
 		// Knowledge file
-		if ( isset( $_POST['knowledge_post_types'] ) && is_array( $_POST['knowledge_post_types'] ) ) {
+		if ( isset( $_POST['knowledge_post_types'] ) ) {
 			$new_post_types = array_map( 'sanitize_text_field', wp_unslash( $_POST['knowledge_post_types'] ) );
-			$saved_post_types = get_post_meta( $post_id, 'knowledge_post_types', true );
-			if ( $new_post_types !== $saved_post_types ) {
-				// Generate JSON data
-				$knowledge_file = new Knowledge();
-				$json_data = $knowledge_file->generate_knowledge_json( $new_post_types );
 
-				// Save JSON to file
-				$file_path = $knowledge_file->save_json_to_file( $json_data, $post_id );
+			// Generate JSON data
+			$knowledge_file = new Knowledge();
+			$json_data = $knowledge_file->generate_knowledge_json( $new_post_types );
 
-				if ( $file_path ) {
-					update_post_meta( $post_id, 'knowledge_file_path', $file_path );
-					update_post_meta( $post_id, 'knowledge_post_types', $new_post_types );
-				}
+			// Save JSON to file
+			$file_path = $knowledge_file->save_json_to_file( $json_data, $post_id );
+
+			if ( $file_path ) {
+				update_post_meta( $post_id, 'knowledge_file_url', Knowledge::get_knowledge_file_url( $post_id ) );
+				update_post_meta( $post_id, 'knowledge_file_path', $file_path );
+				update_post_meta( $post_id, 'knowledge_post_types', $new_post_types );
 			}
 		} else {
 			delete_post_meta( $post_id, 'knowledge_post_types' );
