@@ -37,9 +37,9 @@ class OpenAI_Updater {
 
 		if ( is_wp_error( $result ) ) {
 			Admin_Notices::set_error_notice( $post_id, $result->get_error_message() );
-		} else if ( $result ) {
-			Admin_Notices::set_success_notice( $post_id, 'Assistant updated successfully.' );
 		}
+
+		$this->refresh_openai_assistant_data( $post_id );
 	}
 
 	private function remove_file_from_openai( $post_id ) {
@@ -177,6 +177,35 @@ class OpenAI_Updater {
 		}
 
 		return false;
+	}
+
+	public function refresh_openai_assistant_data( $post_id ) {
+		$assistant_id = get_post_meta( $post_id, 'assistant_id', true );
+		if ( ! $assistant_id ) {
+			return;
+		}
+
+		$result = Jetpack_Client::wpcom_json_api_request_as_user(
+			"/wpcom-ai/assistants/$assistant_id?force=wpcom",
+			'v2',
+			array(
+				'method'  => 'GET',
+				'headers' => array( 'content-type' => 'application/json' ),
+			),
+			null,
+			'wpcom'
+		);
+
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		$response = wp_remote_retrieve_body( $result );
+		update_post_meta( $post_id, 'assistant_data', $response );
+		$response = json_decode( $response );
+		if ( empty( $response->id ) ) {
+			return new \WP_Error( 'no-assistant-id', 'No assistant ID returned from OpenAI.' );
+		}
 	}
 
 	private function prepare_assistant_data( $post_id, $post ) {

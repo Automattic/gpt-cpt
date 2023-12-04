@@ -49,6 +49,16 @@ class Meta_Boxes {
 			'side',
 			'default'
 		);
+
+		// Assistant data.
+		add_meta_box(
+			'assistant_data',
+			'Assistant Data (OpenAI)',
+			array( $this, 'assistant_data' ),
+			'gpt_cpt',
+			'normal',
+			'low'
+		);
 	}
 
 	public function metabox_description() {
@@ -196,5 +206,20 @@ class Meta_Boxes {
 			delete_post_meta( $post_id, 'knowledge_file_path' );
 			delete_post_meta( $post_id, 'knowledge_file_id' );
 		}
+	}
+
+	/**
+	 * Gets the assistant data from OpenAI.
+	 */
+	public function assistant_data( $post_id ) {
+		$assistant_id = get_post_meta( $post_id->ID, 'assistant_id', true );
+		if ( empty( $assistant_id ) ) {
+			return;
+		}
+		$assistant_data = get_post_meta( $post_id->ID, 'assistant_data', true );
+		$assistant_data = json_encode( $assistant_data, JSON_PRETTY_PRINT );
+
+		echo '<p>The Assistant object returned from OpenAI</p>';
+		echo '<textarea disabled name="assistant_data" style="width: 100%; height: 400px;">' . esc_html( $assistant_data ) . '</textarea>';
 	}
 }

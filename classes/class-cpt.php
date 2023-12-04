@@ -12,12 +12,14 @@ class CPT {
 		add_action( 'tiny_mce_before_init', array( $this, 'disable_text_formatting_for_assistants' ), 10, 1 );
 		add_action( 'edit_form_after_title', array( $this, 'add_custom_title_above_editor' ) );
 		add_filter( 'enter_title_here', array( $this, 'change_title_placeholder' ), 10, 2 );
+
+		add_filter( 'preview_post_link', array( $this, 'preview_post_link' ), 10, 2 );
 	}
 
 	public function register_assistant_cpt() {
 		$assistant_labels = array(
 			'name'                  => _x( 'GPT Assistants', 'Post type general name' ),
-			'singular_name'         => _x( 'GPT GPT Assistant', 'Post type singular name' ),
+			'singular_name'         => _x( 'GPT Assistant', 'Post type singular name' ),
 			'menu_name'             => _x( 'GPT Assistants', 'Admin Menu text' ),
 			'name_admin_bar'        => _x( 'GPT Assistant', 'Add New on Toolbar' ),
 			'add_new'               => __( 'Add New GPT Assistant' ),
@@ -57,6 +59,16 @@ class CPT {
 		);
 
 		register_post_type( 'gpt_cpt', $assistant_args );
+	}
+
+	public function preview_post_link( $preview_link, $post ) {
+		if ( 'gpt_cpt' === $post->post_type ) {
+			$assistant_id = get_post_meta( $post->ID, 'assistant_id', true );
+			if ( $assistant_id ) {
+				$preview_link = sprintf( 'https://platform.openai.com/playground?mode=assistant&assistant=%s', $assistant_id );
+			}
+		}
+		return $preview_link;
 	}
 
 	public function add_custom_title_above_editor() {

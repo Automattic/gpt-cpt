@@ -45,6 +45,7 @@ class Chat_Manager {
 			array(
 				'method'  => 'POST',
 				'headers' => array( 'content-type' => 'application/json' ),
+				'timeout' => 60,
 			),
 			array(
 				'message' => $comment->comment_content,
@@ -53,13 +54,13 @@ class Chat_Manager {
 			),
 			'wpcom'
 		);
+
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
 
 		$response = wp_remote_retrieve_body( $result );
 		$response = json_decode( $response );
-		l( $response );
 
 		$messages = $response->messages;
 		$answer = $messages[0]->content;
