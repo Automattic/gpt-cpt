@@ -4,6 +4,7 @@ declare( strict_types=1 );
 namespace GPT_CPT;
 
 use Automattic\Jetpack\Connection\Client as Jetpack_Client;
+use Automattic\JetpackBeta\Admin;
 
 class OpenAI_Updater {
 	public function initialize() {
@@ -25,12 +26,18 @@ class OpenAI_Updater {
 
 			if ( $assistant_id && $update ) {
 				$result = $this->handle_modify_assistant( $assistant_id, $assistant_data );
+				$message = 'Assistant updated.';
 			} else {
 				$result = $this->handle_create_assistant( $post_id, $assistant_data );
+				$message = 'Assistant created.';
 			}
+			Admin_Notices::set_success_notice( $post_id, $message );
 		} else {
 			$this->remove_file_from_openai( $post_id );
 			$result = $this->handle_delete_assistant( $post_id, $assistant_id );
+			if ( true === $result ) {
+				Admin_Notices::set_success_notice( $post_id, 'Assistant removed from OpenAI' );
+			}
 		}
 
 		if ( is_wp_error( $result ) ) {
@@ -115,6 +122,7 @@ class OpenAI_Updater {
 		}
 
 		$knowledge_file_full_path = Knowledge::get_knowledge_file_base_url() . '/' . $selected_file;
+
 		$file_upload = $this->request_wpcom(
 			'/wpcom-ai/files',
 			'POST',
@@ -125,7 +133,7 @@ class OpenAI_Updater {
 		);
 
 		if ( is_wp_error( $file_upload ) ) {
-			Admin_Notices::set_error_notice( $post_id, 'Failed to upload knowledge file.' );
+			Admin_Notices::set_error_notice( $post_id, 'Failed to upload knowledge file1.' );
 			return false;
 		}
 
@@ -133,6 +141,7 @@ class OpenAI_Updater {
 		$response = json_decode( $response );
 
 		if ( isset( $response->error ) ) {
+			error_log( print_r( $response, true ) );
 			Admin_Notices::set_error_notice( $post_id, 'Failed to upload knowledge file.' );
 			return false;
 		}
@@ -142,6 +151,7 @@ class OpenAI_Updater {
 			return false;
 		}
 
+		Admin_Notices::set_success_notice( $post_id, 'Knowledge file uploaded successfully.' );
 		update_post_meta( $post_id, 'selected_knowledge_file_ids', array( $response->id ) );
 		return true;
 	}
@@ -197,25 +207,27 @@ class OpenAI_Updater {
 		if ( empty( $response->id ) ) {
 			return new \WP_Error( 'no-assistant-id', 'No assistant ID returned from OpenAI.' );
 		}
-
-		return true;
 	}
 
 	private function handle_create_assistant( $post_id, array $assistant_data ) {
 		$result = $this->request_wpcom( '/wpcom-ai/assistants', 'POST', $assistant_data );
+		if ( is_wp_error( $result ) ) {
+			l( $result );
+			return $result;
+		}
 
 		$response = wp_remote_retrieve_body( $result );
 		$response = json_decode( $response );
 		if ( empty( $response->id ) ) {
+			error_log( print_r( $response, true ) );
 			return new \WP_Error( 'no-assistant-id', 'No assistant ID returned from OpenAI.' );
 		}
 		update_post_meta( $post_id, 'assistant_id', $response->id );
-		return true;
 	}
 
 	private function handle_delete_assistant( $post_id, $assistant_id ) {
 		if ( ! $assistant_id ) {
-			return;
+			return false;
 		}
 
 		$result = $this->request_wpcom( "/wpcom-ai/assistants/$assistant_id/delete", 'POST' );
