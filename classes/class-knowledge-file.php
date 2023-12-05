@@ -31,6 +31,7 @@ class Knowledge {
 		// Fetch posts from the selected post types
 		$args = array(
 			'post_type'      => $post_types,
+			'post_status'    => 'publish',
 			'posts_per_page' => -1,
 		);
 		$posts = get_posts( $args );

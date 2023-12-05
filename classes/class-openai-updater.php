@@ -4,7 +4,6 @@ declare( strict_types=1 );
 namespace GPT_CPT;
 
 use Automattic\Jetpack\Connection\Client as Jetpack_Client;
-use Jetpack;
 
 class OpenAI_Updater {
 	private $assistant;
@@ -27,6 +26,7 @@ class OpenAI_Updater {
 			$assistant_data = $this->prepare_assistant_data( $post_id, $post );
 
 			if ( $assistant_id && $update ) {
+				// $result = $this->handle_create_assistant( $post_id, $assistant_data );
 				$result = $this->handle_modify_assistant( $assistant_id, $assistant_data );
 			} else {
 				$result = $this->handle_create_assistant( $post_id, $assistant_data );
@@ -38,9 +38,39 @@ class OpenAI_Updater {
 
 		if ( is_wp_error( $result ) ) {
 			Admin_Notices::set_error_notice( $post_id, $result->get_error_message() );
+			delete_post_meta( $post_id, 'assistant_id', $assistant_id );
 		}
 
 		$this->refresh_openai_assistant_data( $post_id );
+	}
+
+	public function request_wpcom( $endpoint, $method = 'GET', $body = null ) {
+		if ( defined( 'IS_WPCOM' ) && IS_WPCOM ) {
+			require_lib( 'wpcom-api-direct' );
+			$query_string = is_array( $body ) ? http_build_query( $body ) : '';
+			$args = array(
+				'headers' => array(
+					'Content-Type'    => 'application/json',
+				),
+				'method'  => $method,
+				'url'     => JETPACK__WPCOM_JSON_API_BASE . '/wpcom/v2' . $endpoint . '?force=wpcom' . '&' . $query_string,
+			);
+			$response = \WPCOM_API_Direct::do_request( $args, $body );
+		} else {
+			$response = Jetpack_Client::wpcom_json_api_request_as_user(
+				$endpoint . '?force=wpcom',
+				'v2',
+				array(
+					'method'  => $method,
+					'headers' => array( 'content-type' => 'application/json' ),
+					'timeout' => 60,
+				),
+				$body,
+				'wpcom'
+			);
+		}
+
+		return $response;
 	}
 
 	private function remove_file_from_openai( $post_id ) {
@@ -51,17 +81,12 @@ class OpenAI_Updater {
 
 		$deleted_file_ids = array();
 		foreach ( $file_ids as $file_id ) {
-			$file_delete = Jetpack_Client::wpcom_json_api_request_as_user(
-				"/wpcom-ai/files/$file_id/delete?force=wpcom",
-				'v2',
-				array(
-					'method'  => 'POST',
-					'headers' => array( 'content-type' => 'application/json' ),
-				),
+			$file_delete = $this->request_wpcom(
+				"/wpcom-ai/files/$file_id/delete",
+				'POST',
 				array(
 					'file_id' => $file_id,
-				),
-				'wpcom'
+				)
 			);
 
 			if ( ! is_wp_error( $file_delete ) ) {
@@ -89,18 +114,13 @@ class OpenAI_Updater {
 			return;
 		}
 
-		$file_upload = Jetpack_Client::wpcom_json_api_request_as_user(
-			'/wpcom-ai/files?force=wpcom',
-			'v2',
+		$file_upload = $this->request_wpcom(
+			'/wpcom-ai/files',
+			'POST',
 			array(
-				'method'  => 'POST',
-				'headers' => array( 'content-type' => 'application/json' ),
-			),
-			array(
-				'file' => Knowledge::get_knowledge_file_url( $post_id ),
+				'file' => $file_url,
 				'purpose' => 'assistants',
-			),
-			'wpcom'
+			)
 		);
 
 		if ( is_wp_error( $file_upload ) ) {
@@ -136,15 +156,12 @@ class OpenAI_Updater {
 	}
 
 	public function list_uploaded_files() {
-		$result = Jetpack_Client::wpcom_json_api_request_as_user(
-			'/wpcom-ai/files?force=wpcom',
-			'v2',
+		$result = $this->request_wpcom(
+			'/wpcom-ai/files',
+			'GET',
 			array(
-				'method'  => 'GET',
-				'headers' => array( 'content-type' => 'application/json' ),
-			),
-			null,
-			'wpcom'
+				'purpose' => 'assistants',
+			)
 		);
 
 		if ( is_wp_error( $result ) ) {
@@ -162,18 +179,13 @@ class OpenAI_Updater {
 	}
 
 	private function handle_modify_assistant( $assistant_id, $assistant_data ) {
-		$result = Jetpack_Client::wpcom_json_api_request_as_user(
-			"/wpcom-ai/assistants/$assistant_id?force=wpcom",
-			'v2',
-			array(
-				'method'  => 'POST',
-				'headers' => array( 'content-type' => 'application/json' ),
-			),
+		$result = $this->request_wpcom(
+			"/wpcom-ai/assistants/$assistant_id",
+			'POST',
 			array_merge(
-				array( 'assistant_id'   => $assistant_id, ),
+				array( 'assistant_id' => $assistant_id ),
 				$assistant_data,
-			),
-			'wpcom'
+			)
 		);
 
 		if ( is_wp_error( $result ) ) {
@@ -190,19 +202,7 @@ class OpenAI_Updater {
 	}
 
 	private function handle_create_assistant( $post_id, array $assistant_data ) {
-		$result = Jetpack_Client::wpcom_json_api_request_as_user(
-			'/wpcom-ai/assistants?force=wpcom',
-			'v2',
-			array(
-				'method'  => 'POST',
-				'headers' => array( 'content-type' => 'application/json' ),
-			),
-			$assistant_data,
-			'wpcom'
-		);
-		if ( is_wp_error( $result ) ) {
-			return $result;
-		}
+		$result = $this->request_wpcom( '/wpcom-ai/assistants', 'POST', $assistant_data );
 
 		$response = wp_remote_retrieve_body( $result );
 		$response = json_decode( $response );
@@ -215,18 +215,7 @@ class OpenAI_Updater {
 
 	private function handle_delete_assistant( $post_id, $assistant_id ) {
 		if ( $assistant_id ) {
-			$result = Jetpack_Client::wpcom_json_api_request_as_user(
-				"/wpcom-ai/assistants/$assistant_id/delete?force=wpcom",
-				'v2',
-				array(
-					'method'  => 'POST',
-					'headers' => array( 'content-type' => 'application/json' ),
-				),
-				array(
-					'assistant_id' => $assistant_id,
-				),
-				'wpcom'
-			);
+			$result = $this->request_wpcom( "/wpcom-ai/assistants/$assistant_id/delete", 'POST' );
 			$response = wp_remote_retrieve_body( $result );
 			$response = json_decode( $response );
 			if ( is_wp_error( $response ) ) {
@@ -250,17 +239,7 @@ class OpenAI_Updater {
 			return;
 		}
 
-		$result = Jetpack_Client::wpcom_json_api_request_as_user(
-			"/wpcom-ai/assistants/$assistant_id?force=wpcom",
-			'v2',
-			array(
-				'method'  => 'GET',
-				'headers' => array( 'content-type' => 'application/json' ),
-			),
-			null,
-			'wpcom'
-		);
-
+		$result = $this->request_wpcom( "/wpcom-ai/assistants/$assistant_id", 'GET' );
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}

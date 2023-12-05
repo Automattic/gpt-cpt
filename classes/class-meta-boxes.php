@@ -81,6 +81,10 @@ class Meta_Boxes {
 		$allowed_post_types = array_values( get_post_types( array( 'public' => true ) ) );
 
 		$file_path = get_post_meta( $post->ID, 'knowledge_file_path', true );
+		if ( ! is_string( $file_path ) ) {
+			$file_path = '';
+			delete_post_meta( $post->ID, 'knowledge_file_path' );
+		}
 		$file_ids = get_post_meta( $post->ID, 'knowledge_file_ids', true );
 
 		if ( $file_ids ) {
