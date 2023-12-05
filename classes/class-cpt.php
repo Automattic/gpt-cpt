@@ -13,7 +13,7 @@ class CPT {
 		add_action( 'edit_form_after_title', array( $this, 'add_custom_title_above_editor' ) );
 		add_filter( 'enter_title_here', array( $this, 'change_title_placeholder' ), 10, 2 );
 
-		add_filter( 'preview_post_link', array( $this, 'preview_post_link' ), 10, 2 );
+		// add_filter( 'preview_post_link', array( $this, 'preview_post_link' ), 10, 2 );
 	}
 
 	public function register_assistant_cpt() {

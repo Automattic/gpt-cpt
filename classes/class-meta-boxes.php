@@ -13,7 +13,7 @@ class Meta_Boxes {
 		// Upload a knowledge file.
 		add_meta_box(
 			'assistant_generate_knowledge_box',
-			'Upload Knowledge',
+			'Knowledge Files',
 			array( $this, 'metabox_knowledge' ),
 			'gpt_cpt',
 			'normal',
@@ -76,14 +76,16 @@ class Meta_Boxes {
 
 		$selected_knowledge_file = get_post_meta( $post->ID, 'selected_knowledge_file', true );
 		$knowledge_files = Knowledge::get_knowledge_files();
-		echo '<p>Use an available file in <a href="' . esc_url( Knowledge::get_knowledge_file_base_url() ) . '">wp-content/uploads/knowledge</a></p>';
+		$base_url = Knowledge::get_knowledge_file_base_url();
+		echo '<p>Use an available file in <a href="' . esc_url( $base_url ) . '">wp-content/uploads/knowledge</a></p>';
 		echo "<ul>";
 
 		foreach ( $knowledge_files as $file ) {
+			$file_url = $base_url . '/' . $file;
 			$checked = checked( $selected_knowledge_file, $file, false );
 			echo '<li><label>';
 			echo '<input type="radio" name="selected_knowledge_file" value="' . esc_attr( $file ) . '"' . $checked . '> ';
-			echo esc_html( $file );
+			echo '<a href="' . esc_url( $file_url ) . '" target="_blank">' . esc_html( $file ) . '</a>';
 			echo '</label></li>';
 		}
 
@@ -92,9 +94,9 @@ class Meta_Boxes {
 		// View knowledge file in OpenAI
 		// TODO - Support multiple? Or just one?
 		$knowledge_file_id = get_post_meta( $post->ID, 'selected_knowledge_file_ids', true );
-		if ( is_array( $knowledge_file_id ) ) {
+		if ( is_array( $knowledge_file_id ) && ! empty( $knowledge_file_id[0] ) ) {
 			$knowledge_file_url = 'https://platform.openai.com/files/' . $knowledge_file_id[0];
-			echo '<p><a href="' . esc_url( $knowledge_file_url ) . '" target="_blank">View knowledge file in OpenAI</a></p>';
+			echo '<p><a href="' . esc_url( $knowledge_file_url ) . '" target="_blank">View knowledge file in OpenAI</a> ' . esc_html( $knowledge_file_id[0] ) . '</p>';
 		}
 
 		// Echo generate new knowledge file form
@@ -205,12 +207,28 @@ class Meta_Boxes {
 	public function assistant_data( $post_id ) {
 		$assistant_id = get_post_meta( $post_id->ID, 'assistant_id', true );
 		if ( empty( $assistant_id ) ) {
+			echo '<p>No Assistant ID found for this post.</p>';
 			return;
 		}
-		$assistant_data = get_post_meta( $post_id->ID, 'assistant_data', true );
-		$assistant_data = json_encode( $assistant_data, JSON_PRETTY_PRINT );
 
-		echo '<p>The Assistant object returned from OpenAI</p>';
-		echo '<textarea disabled name="assistant_data" style="width: 100%; height: 400px;">' . esc_html( $assistant_data ) . '</textarea>';
+		$assistant_data = get_post_meta( $post_id->ID, 'assistant_data', true );
+		if ( ! $assistant_data ) {
+			echo '<p>No Assistant data available.</p>';
+			return;
+		}
+
+		$assistant_data_object = json_decode( $assistant_data );
+		if ( $assistant_data_object === false ) {
+			echo '<p>Error in JSON encoding.</p>';
+			return;
+		}
+
+		$assistant_url = sprintf( 'https://platform.openai.com/playground?mode=assistant&assistant=%s', $assistant_id );
+		echo '<p>Your Assistant in OpenAI</p>';
+		echo '<p><a href="' . esc_url( $assistant_url ) . '" target="_blank">View Assistant</a></p>';
+		echo '<textarea disabled name="assistant_data" style="width: 100%; height: 400px;">';
+		echo wp_json_encode( $assistant_data_object, JSON_PRETTY_PRINT ); // Directly output the encoded JSON string
+		echo '</textarea>';
 	}
+
 }

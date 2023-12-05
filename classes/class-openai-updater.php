@@ -20,7 +20,7 @@ class OpenAI_Updater {
 
 		$assistant_id = get_post_meta( $post_id, 'assistant_id', true );
 		if ( 'publish' === $post->post_status ) {
-			$file_uploaded = $this->maybe_upload_files( $post_id, $assistant_id );
+			$this->maybe_upload_files( $post_id, $assistant_id );
 			$assistant_data = $this->prepare_assistant_data( $post_id, $post );
 
 			if ( $assistant_id && $update ) {
@@ -71,7 +71,7 @@ class OpenAI_Updater {
 	}
 
 	private function remove_file_from_openai( $post_id ) {
-		$file_ids = get_post_meta( $post_id, 'knowledge_file_ids', true );
+		$file_ids = get_post_meta( $post_id, 'selected_knowledge_file_ids', true );
 		if ( ! is_array( $file_ids ) ) {
 			return;
 		}
@@ -95,7 +95,7 @@ class OpenAI_Updater {
 		foreach ( $deleted_file_ids as $deleted_file_id ) {
 			$file_ids = array_diff( $file_ids, array( $deleted_file_id ) );
 		}
-		update_post_meta( $post_id, 'knowledge_file_ids', array() );
+		update_post_meta( $post_id, 'selected_knowledge_file_ids', array() );
 	}
 
 	private function maybe_upload_files( $post_id, $assistant_id = false ) {
