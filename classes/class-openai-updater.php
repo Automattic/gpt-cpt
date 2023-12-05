@@ -6,8 +6,6 @@ namespace GPT_CPT;
 use Automattic\Jetpack\Connection\Client as Jetpack_Client;
 
 class OpenAI_Updater {
-	private $assistant;
-
 	public function initialize() {
 		add_action( 'save_post_gpt_cpt', array( $this, 'save_post' ), 20, 3 );
 	}
@@ -22,11 +20,10 @@ class OpenAI_Updater {
 
 		$assistant_id = get_post_meta( $post_id, 'assistant_id', true );
 		if ( 'publish' === $post->post_status ) {
-			$this->maybe_upload_files( $post_id, $post );
+			$file_uploaded = $this->maybe_upload_files( $post_id, $assistant_id );
 			$assistant_data = $this->prepare_assistant_data( $post_id, $post );
 
 			if ( $assistant_id && $update ) {
-				// $result = $this->handle_create_assistant( $post_id, $assistant_data );
 				$result = $this->handle_modify_assistant( $assistant_id, $assistant_data );
 			} else {
 				$result = $this->handle_create_assistant( $post_id, $assistant_data );
@@ -101,43 +98,52 @@ class OpenAI_Updater {
 		update_post_meta( $post_id, 'knowledge_file_ids', array() );
 	}
 
-	private function maybe_upload_files( $post_id, $post ) {
-		if ( ! $post->post_status === 'publish' ) {
-			return;
+	private function maybe_upload_files( $post_id, $assistant_id = false ) {
+		$selected_file = get_post_meta( $post_id, 'selected_knowledge_file', true );
+		if ( ! $selected_file ) {
+			error_log( 'No selected file.' );
+			return false;
 		}
 
-		$file_path = Knowledge::get_knowledge_file_path( $post_id );
-		$file_url = Knowledge::get_knowledge_file_url( $post_id );
+		// Check if it's already uploaded
+		$file_id = $this->get_file_id_from_file_name( $selected_file );
 
-		if ( ! $file_url || ! file_exists( $file_path ) ) {
-			error_log( 'doesnnt exist' );
-			return;
+		if ( $file_id ) {
+			update_post_meta( $post_id, 'selected_knowledge_file_ids', array( $file_id ) );
+			error_log( 'File already uploaded. Nothing to do' );
+			return true;
 		}
 
+		$knowledge_file_full_path = Knowledge::get_knowledge_file_base_url() . '/' . $selected_file;
 		$file_upload = $this->request_wpcom(
 			'/wpcom-ai/files',
 			'POST',
 			array(
-				'file' => $file_url,
+				'file' => $knowledge_file_full_path,
 				'purpose' => 'assistants',
 			)
 		);
 
 		if ( is_wp_error( $file_upload ) ) {
 			Admin_Notices::set_error_notice( $post_id, 'Failed to upload knowledge file.' );
-			return;
+			return false;
 		}
 
 		$response = wp_remote_retrieve_body( $file_upload );
 		$response = json_decode( $response );
 
-		if ( $response->error ) {
+		if ( isset( $response->error ) ) {
 			Admin_Notices::set_error_notice( $post_id, 'Failed to upload knowledge file.' );
-			return;
+			return false;
 		}
 
-		update_post_meta( $post_id, 'knowledge_file_url', $file_url );
-		update_post_meta( $post_id, 'knowledge_file_ids', array( $response->id ) );
+		if ( ! isset( $response->id ) ) {
+			Admin_Notices::set_error_notice( $post_id, 'No file uploaded.' );
+			return false;
+		}
+
+		update_post_meta( $post_id, 'selected_knowledge_file_ids', array( $response->id ) );
+		return true;
 	}
 
 	public function get_file_id_from_file_name( $file_name ) {
@@ -147,7 +153,7 @@ class OpenAI_Updater {
 		}
 
 		foreach ( $files as $file ) {
-			if ( $file_name === $file->name ) {
+			if ( $file_name === $file->filename ) {
 				return $file->id;
 			}
 		}
@@ -156,13 +162,7 @@ class OpenAI_Updater {
 	}
 
 	public function list_uploaded_files() {
-		$result = $this->request_wpcom(
-			'/wpcom-ai/files',
-			'GET',
-			array(
-				'purpose' => 'assistants',
-			)
-		);
+		$result = $this->request_wpcom( '/wpcom-ai/files' );
 
 		if ( is_wp_error( $result ) ) {
 			return $result;
@@ -171,11 +171,11 @@ class OpenAI_Updater {
 		$response = wp_remote_retrieve_body( $result );
 		$response = json_decode( $response );
 
-		if ( $response->error ) {
+		if ( isset( $response->error ) ) {
 			return new \WP_Error( 'failed-to-list-files', 'Failed to list uploaded files.' );
 		}
 
-		return $response->files;
+		return $response->data;
 	}
 
 	private function handle_modify_assistant( $assistant_id, $assistant_data ) {
@@ -214,23 +214,23 @@ class OpenAI_Updater {
 	}
 
 	private function handle_delete_assistant( $post_id, $assistant_id ) {
-		if ( $assistant_id ) {
-			$result = $this->request_wpcom( "/wpcom-ai/assistants/$assistant_id/delete", 'POST' );
-			$response = wp_remote_retrieve_body( $result );
-			$response = json_decode( $response );
-			if ( is_wp_error( $response ) ) {
-				return $response;
-			}
-
-			if ( ! isset( $response->deleted ) ) {
-				return new \WP_Error( 'assistant-not-deleted', 'Assistant was not deleted.' );
-			}
-
-			delete_post_meta( $post_id, 'assistant_id' );
-			return true;
+		if ( ! $assistant_id ) {
+			return;
 		}
 
-		return false;
+		$result = $this->request_wpcom( "/wpcom-ai/assistants/$assistant_id/delete", 'POST' );
+		$response = wp_remote_retrieve_body( $result );
+		$response = json_decode( $response );
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		if ( ! isset( $response->deleted ) ) {
+			return new \WP_Error( 'assistant-not-deleted', 'Assistant was not deleted.' );
+		}
+
+		delete_post_meta( $post_id, 'assistant_id' );
+		return true;
 	}
 
 	public function refresh_openai_assistant_data( $post_id ) {
@@ -254,7 +254,7 @@ class OpenAI_Updater {
 
 	private function prepare_assistant_data( $post_id, $post ) {
 		$tools = get_post_meta( $post_id, 'assistant_tools', true );
-		$file_ids = get_post_meta( $post_id, 'knowledge_file_ids', true );
+		$file_ids = get_post_meta( $post_id, 'selected_knowledge_file_ids', true );
 		if ( ! is_array( $file_ids ) ) {
 			$file_ids = array();
 		}

@@ -74,48 +74,42 @@ class Meta_Boxes {
 	public function metabox_knowledge( $post ) {
 		wp_nonce_field( basename( __FILE__ ), 'gpt_cpt_nonce' );
 
-		$selected_post_types = get_post_meta( $post->ID, 'knowledge_post_types', true );
-		if ( ! is_array( $selected_post_types ) ) {
-			$selected_post_types = ( $selected_post_types ) ? array( $selected_post_types ) : array();
+		$selected_knowledge_file = get_post_meta( $post->ID, 'selected_knowledge_file', true );
+		$knowledge_files = Knowledge::get_knowledge_files();
+		echo '<p>Use an available file in <a href="' . esc_url( Knowledge::get_knowledge_file_base_url() ) . '">wp-content/uploads/knowledge</a></p>';
+		echo "<ul>";
+
+		foreach ( $knowledge_files as $file ) {
+			$checked = checked( $selected_knowledge_file, $file, false );
+			echo '<li><label>';
+			echo '<input type="radio" name="selected_knowledge_file" value="' . esc_attr( $file ) . '"' . $checked . '> ';
+			echo esc_html( $file );
+			echo '</label></li>';
 		}
+
+		echo "</ul>";
+
+		// View knowledge file in OpenAI
+		// TODO - Support multiple? Or just one?
+		$knowledge_file_id = get_post_meta( $post->ID, 'selected_knowledge_file_ids', true );
+		if ( is_array( $knowledge_file_id ) ) {
+			$knowledge_file_url = 'https://platform.openai.com/files/' . $knowledge_file_id[0];
+			echo '<p><a href="' . esc_url( $knowledge_file_url ) . '" target="_blank">View knowledge file in OpenAI</a></p>';
+		}
+
+		// Echo generate new knowledge file form
+		echo "<h2>Generate new knowledge file from:</h2>";
 		$allowed_post_types = array_values( get_post_types( array( 'public' => true ) ) );
-
-		$file_path = get_post_meta( $post->ID, 'knowledge_file_path', true );
-		if ( ! is_string( $file_path ) ) {
-			$file_path = '';
-			delete_post_meta( $post->ID, 'knowledge_file_path' );
-		}
-		$file_ids = get_post_meta( $post->ID, 'knowledge_file_ids', true );
-
-		if ( $file_ids ) {
-			echo '<p>Knowledge Files:</p>';
-		}
-
-		if ( file_exists( $file_path ) ) {
-			$knowledge_file_url = Knowledge::get_knowledge_file_url( $post->ID );
-			echo '<p>Knowledge File: <a href="' . esc_url( $knowledge_file_url ) . '" target="_blank">' . esc_html( $knowledge_file_url ) . '</a></p>';
-
-			// echo knowledge file ids
-			$file_ids = get_post_meta( $post->ID, 'knowledge_file_ids', true );
-			if ( $file_ids ) {
-				echo '<p>Knowledge File IDs: ' . json_encode( $file_ids ) . '</p>';
-			}
-		}
-
-		echo '<label>Post types to include in knowledge:</label>';
 		echo '<ul>';
-		$this->render_post_type_list_html( $allowed_post_types, $selected_post_types );
+		$this->render_post_type_list_html( $allowed_post_types );
 		echo '</ul>';
 	}
 
-	private function render_post_type_list_html( $allowed_post_types, $selected_post_types = array() ) {
+	private function render_post_type_list_html( $allowed_post_types ) {
 		foreach ( $allowed_post_types as $type ) {
 			$post_type_object = get_post_type_object( $type );
 			$label            = $post_type_object->labels->name;
 			$checked = '';
-			if ( in_array( $type, $selected_post_types, true ) ) {
-				$checked = 'checked="checked" ';
-			}
 			?>
 		<li>
 			<label>
@@ -194,17 +188,14 @@ class Meta_Boxes {
 			$json_data = $knowledge_file->generate_knowledge_json( $new_post_types );
 
 			// Save JSON to file
-			$file_path = $knowledge_file->save_json_to_file( $json_data, $post_id );
+			$knowledge_file->save_json_to_file( $json_data, $post_id );
+		}
 
-			if ( $file_path ) {
-				update_post_meta( $post_id, 'knowledge_file_url', Knowledge::get_knowledge_file_url( $post_id ) );
-				update_post_meta( $post_id, 'knowledge_file_path', $file_path );
-				update_post_meta( $post_id, 'knowledge_post_types', $new_post_types );
-			}
+		// Save selected knowledge file to upload.
+		if ( isset( $_POST['selected_knowledge_file'] ) ) {
+			update_post_meta( $post_id, 'selected_knowledge_file', sanitize_text_field( wp_unslash( $_POST['selected_knowledge_file'] ) ) );
 		} else {
-			delete_post_meta( $post_id, 'knowledge_post_types' );
-			delete_post_meta( $post_id, 'knowledge_file_path' );
-			delete_post_meta( $post_id, 'knowledge_file_id' );
+			delete_post_meta( $post_id, 'selected_knowledge_file' );
 		}
 	}
 
