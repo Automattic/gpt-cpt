@@ -45,7 +45,7 @@ class Chat_Manager {
 			array(
 				'method'  => 'POST',
 				'headers' => array( 'content-type' => 'application/json' ),
-				'timeout' => 60,
+				'timeout' => 120,
 			),
 			array(
 				'message' => $comment->comment_content,
@@ -61,6 +61,11 @@ class Chat_Manager {
 
 		$response = wp_remote_retrieve_body( $result );
 		$response = json_decode( $response );
+
+		if ( ! isset( $response->messages ) ) {
+			error_log( print_r( $response, true ) );
+			return;
+		}
 
 		$messages = $response->messages;
 		$answer = $messages[0]->content;
