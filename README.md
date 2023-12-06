@@ -3,4 +3,4 @@
 
 Requires a Jetpack connection.
 
-By default, uses the a8c OpenAI org for Assistants.
+Details: peGwbA-19U-p2
