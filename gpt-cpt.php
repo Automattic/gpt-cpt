@@ -7,14 +7,13 @@
 
 namespace GPT_CPT;
 
-use Automattic\Jetpack\Connection\Client;
-
 require_once 'classes/class-admin-notices.php';
 require_once 'classes/class-chat-manager.php';
 require_once 'classes/class-cpt.php';
 require_once 'classes/class-meta-boxes.php';
 require_once 'classes/class-openai-updater.php';
 require_once 'classes/class-knowledge-file.php';
+require_once 'classes/class-settings.php';
 
 class GPT_CPT_Plugin {
 	private $cpt;
@@ -29,6 +28,7 @@ class GPT_CPT_Plugin {
 		$this->chat_manager = new Chat_Manager();
 		$this->openai_updater = new OpenAI_Updater();
 		$this->admin_notices = new Admin_Notices();
+		new OpenAI_Settings();
 
 		$this->initialize();
 	}

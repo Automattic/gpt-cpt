@@ -91,14 +91,6 @@ class Meta_Boxes {
 
 		echo "</ul>";
 
-		// View knowledge file in OpenAI
-		// TODO - Support multiple? Or just one?
-		$knowledge_file_id = get_post_meta( $post->ID, 'selected_knowledge_file_ids', true );
-		if ( is_array( $knowledge_file_id ) && ! empty( $knowledge_file_id[0] ) ) {
-			$knowledge_file_url = 'https://platform.openai.com/files/' . $knowledge_file_id[0];
-			echo '<p><a href="' . esc_url( $knowledge_file_url ) . '" target="_blank">View knowledge file in OpenAI</a> ' . esc_html( $knowledge_file_id[0] ) . '</p>';
-		}
-
 		// Echo generate new knowledge file form
 		echo "<h2>Generate new knowledge file from:</h2>";
 		$allowed_post_types = array_values( get_post_types( array( 'public' => true ) ) );

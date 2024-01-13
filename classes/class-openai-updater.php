@@ -3,10 +3,15 @@ declare( strict_types=1 );
 
 namespace GPT_CPT;
 
-use Automattic\Jetpack\Connection\Client as Jetpack_Client;
-use Automattic\JetpackBeta\Admin;
+use Jetpack_Options;
 
 class OpenAI_Updater {
+	public $openai_token;
+
+	public function __construct() {
+		$this->openai_token = get_option( 'gpt_cpt_openai_api_token' );
+	}
+
 	public function initialize() {
 		add_action( 'save_post_gpt_cpt', array( $this, 'save_post' ), 20, 3 );
 	}
@@ -26,53 +31,47 @@ class OpenAI_Updater {
 
 			if ( $assistant_id && $update ) {
 				$result = $this->handle_modify_assistant( $assistant_id, $assistant_data );
-				$message = 'Assistant updated.';
+				$success_message = 'Assistant updated.';
 			} else {
 				$result = $this->handle_create_assistant( $post_id, $assistant_data );
-				$message = 'Assistant created.';
+				$success_message = 'Assistant created.';
 			}
-			Admin_Notices::set_success_notice( $post_id, $message );
 		} else {
 			$this->remove_file_from_openai( $post_id );
 			$result = $this->handle_delete_assistant( $post_id, $assistant_id );
-			if ( true === $result ) {
-				Admin_Notices::set_success_notice( $post_id, 'Assistant removed from OpenAI' );
-			}
+			$success_message = 'Assistant removed from OpenAI';
 		}
 
 		if ( is_wp_error( $result ) ) {
 			Admin_Notices::set_error_notice( $post_id, $result->get_error_message() );
-			delete_post_meta( $post_id, 'assistant_id', $assistant_id );
+		} else {
+			Admin_Notices::set_success_notice( $post_id, $success_message );
 		}
 
 		$this->refresh_openai_assistant_data( $post_id );
 	}
 
 	public function request_wpcom( $endpoint, $method = 'GET', $body = null ) {
-		if ( defined( 'IS_WPCOM' ) && IS_WPCOM ) {
-			require_lib( 'wpcom-api-direct' );
-			$query_string = is_array( $body ) ? http_build_query( $body ) : '';
-			$args = array(
-				'headers' => array(
-					'Content-Type'    => 'application/json',
-				),
-				'method'  => $method,
-				'url'     => JETPACK__WPCOM_JSON_API_BASE . '/wpcom/v2' . $endpoint . '?force=wpcom' . '&' . $query_string,
-			);
-			$response = \WPCOM_API_Direct::do_request( $args, $body );
+		$url = JETPACK__WPCOM_JSON_API_BASE . '/wpcom/v2' . $endpoint;
+		$data = [
+			'method'  => $method,
+			'headers' => [
+				'content-type' => 'application/json',
+				'OpenAI-Beta' => 'assistants=v1',
+				'Authorization' => 'Bearer ' . $this->openai_token,
+			],
+			'timeout' => 120,
+		];
+		if ( 'GET' === $method ) {
+			$_req_func = 'wp_remote_get';
 		} else {
-			$response = Jetpack_Client::wpcom_json_api_request_as_user(
-				$endpoint . '?force=wpcom',
-				'v2',
-				array(
-					'method'  => $method,
-					'headers' => array( 'content-type' => 'application/json' ),
-					'timeout' => 60,
-				),
-				$body,
-				'wpcom'
-			);
+			$_req_func = 'wp_remote_post';
+			$data['body'] = json_encode( $body );
 		}
+		$response = $_req_func(
+			$url,
+			$data
+		);
 
 		return $response;
 	}
@@ -86,8 +85,8 @@ class OpenAI_Updater {
 		$deleted_file_ids = array();
 		foreach ( $file_ids as $file_id ) {
 			$file_delete = $this->request_wpcom(
-				"/wpcom-ai/files/$file_id/delete",
-				'POST',
+				"/openai-proxy/v1/$file_id",
+				'DELETE',
 				array(
 					'file_id' => $file_id,
 				)
@@ -121,33 +120,31 @@ class OpenAI_Updater {
 			return true;
 		}
 
-		$knowledge_file_full_path = Knowledge::get_knowledge_file_base_url() . '/' . $selected_file;
+		$knowledge_file_full_path = Knowledge::get_knowledge_file_dir() . '/' . $selected_file;
+		$url = JETPACK__WPCOM_JSON_API_BASE . '/wpcom/v2/openai-proxy/v1/files';
+		$ch = curl_init();
+		curl_setopt( $ch, CURLOPT_URL, $url );
+		curl_setopt( $ch, CURLOPT_POST, 1 );
+		curl_setopt( $ch, CURLOPT_POSTFIELDS, array(
+			'file' => new \CURLFile( $knowledge_file_full_path, 'application/json', basename( $knowledge_file_full_path ) ),
+			'purpose' => 'assistants'
+		) );
+		curl_setopt( $ch, CURLOPT_HTTPHEADER, array(
+			'Authorization: ' . $this->openai_token,
+		) );
+		curl_setopt( $ch, CURLOPT_RETURNTRANSFER, true );
+		$response = curl_exec( $ch );
 
-		$file_upload = $this->request_wpcom(
-			'/wpcom-ai/files',
-			'POST',
-			array(
-				'file' => $knowledge_file_full_path,
-				'purpose' => 'assistants',
-			)
-		);
+		$error_msg = false;
+		if ( curl_errno( $ch ) ) {
+			$error_msg = curl_error( $ch );
+		}
+		curl_close( $ch );
 
-		if ( is_wp_error( $file_upload ) ) {
+		$response = $response ? json_decode( $response ) : false;
+
+		if ( $error_msg || ! isset( $response->id ) ) {
 			Admin_Notices::set_error_notice( $post_id, 'Failed to upload knowledge file1.' );
-			return false;
-		}
-
-		$response = wp_remote_retrieve_body( $file_upload );
-		$response = json_decode( $response );
-
-		if ( isset( $response->error ) ) {
-			error_log( print_r( $response, true ) );
-			Admin_Notices::set_error_notice( $post_id, 'Failed to upload knowledge file.' );
-			return false;
-		}
-
-		if ( ! isset( $response->id ) ) {
-			Admin_Notices::set_error_notice( $post_id, 'No file uploaded.' );
 			return false;
 		}
 
@@ -172,7 +169,7 @@ class OpenAI_Updater {
 	}
 
 	public function list_uploaded_files() {
-		$result = $this->request_wpcom( '/wpcom-ai/files' );
+		$result = $this->request_wpcom( '/openai-proxy/v1/files' );
 
 		if ( is_wp_error( $result ) ) {
 			return $result;
@@ -190,12 +187,9 @@ class OpenAI_Updater {
 
 	private function handle_modify_assistant( $assistant_id, $assistant_data ) {
 		$result = $this->request_wpcom(
-			"/wpcom-ai/assistants/$assistant_id",
+			"/openai-proxy/v1/assistants/$assistant_id",
 			'POST',
-			array_merge(
-				array( 'assistant_id' => $assistant_id ),
-				$assistant_data,
-			)
+			$assistant_data,
 		);
 
 		if ( is_wp_error( $result ) ) {
@@ -210,9 +204,13 @@ class OpenAI_Updater {
 	}
 
 	private function handle_create_assistant( $post_id, array $assistant_data ) {
-		$result = $this->request_wpcom( '/wpcom-ai/assistants', 'POST', $assistant_data );
+		$result = $this->request_wpcom(
+			'/openai-proxy/v1/assistants',
+			'POST',
+			$assistant_data
+		);
+
 		if ( is_wp_error( $result ) ) {
-			l( $result );
 			return $result;
 		}
 
@@ -230,7 +228,7 @@ class OpenAI_Updater {
 			return false;
 		}
 
-		$result = $this->request_wpcom( "/wpcom-ai/assistants/$assistant_id/delete", 'POST' );
+		$result = $this->request_wpcom( "/openai-proxy/v1/assistants/$assistant_id", 'DELETE' );
 		$response = wp_remote_retrieve_body( $result );
 		$response = json_decode( $response );
 		if ( is_wp_error( $response ) ) {
@@ -251,7 +249,7 @@ class OpenAI_Updater {
 			return;
 		}
 
-		$result = $this->request_wpcom( "/wpcom-ai/assistants/$assistant_id", 'GET' );
+		$result = $this->request_wpcom( "/openai-proxy/v1/assistants/$assistant_id", 'GET' );
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
@@ -267,6 +265,11 @@ class OpenAI_Updater {
 	private function prepare_assistant_data( $post_id, $post ) {
 		$tools = get_post_meta( $post_id, 'assistant_tools', true );
 		$file_ids = get_post_meta( $post_id, 'selected_knowledge_file_ids', true );
+		if ( is_wp_error( $file_ids[0] ) ) {
+			$file_ids = array();
+			error_log( 'problem with the file ids' );
+			delete_post_meta( $post_id, 'selected_knowledge_file_ids' );
+		}
 		if ( ! is_array( $file_ids ) ) {
 			$file_ids = array();
 		}
@@ -277,7 +280,12 @@ class OpenAI_Updater {
 			'tools' => [
 				[ 'type' => $tools ], // TODO: Add support for multiple tools
 			],
+			'model' => 'gpt-4-1106-preview',
 			'file_ids' => $file_ids,
+			'metadata' => [
+				'wordpress_post_id' => $post_id,
+				'wordpress_blog_id' => Jetpack_Options::get_option( 'id' ),
+			],
 		);
 	}
 }
