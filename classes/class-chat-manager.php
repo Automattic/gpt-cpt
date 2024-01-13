@@ -40,7 +40,7 @@ class Chat_Manager {
 
 		// If this is a top-level comment, create a new thread.
 		if ( $comment->comment_parent == 0 ) {
-			$thread = $this->create_new_thread( $comment->comment_content );
+			$thread = $this->create_new_thread();
 			$thread_id = $thread->id;
 			if ( isset( $thread->id ) ) {
 				update_comment_meta( $comment_id, 'thread_id', $thread->id );
@@ -51,6 +51,13 @@ class Chat_Manager {
 
 		if ( ! $thread_id ) {
 			error_log( 'no thread id' );
+			return;
+		}
+
+		// add message to thread
+		$message = $this->add_message_to_thread( $thread_id, $comment->comment_content );
+		if ( $message->thread_id !== $thread_id ) {
+			error_log( 'thread id mismatch' );
 			return;
 		}
 
@@ -76,23 +83,6 @@ class Chat_Manager {
 			return;
 		}
 
-		// $endpoint = $chat_id ? "/odie/chat/jetpack-gpt-assistant/$chat_id?force=wpcom" : '/odie/chat/jetpack-gpt-assistant?force=wpcom';
-		// $result = Jetpack_Client::wpcom_json_api_request_as_user(
-		// 	$endpoint,
-		// 	'v2',
-		// 	array(
-		// 		'method'  => 'POST',
-		// 		'headers' => array( 'content-type' => 'application/json' ),
-		// 		'timeout' => 120,
-		// 	),
-		// 	array(
-		// 		'message' => $comment->comment_content,
-		// 		'assistant_id' => $assistant_id,
-		// 		'test' => true,
-		// 	),
-		// 	'wpcom'
-		// );
-
 		// Bot comment data
 		$bot_commentdata = array(
 			'comment_post_ID' => $comment->comment_post_ID,
@@ -113,18 +103,28 @@ class Chat_Manager {
 	/**
 	 * Creates a new thread for the assistant.
 	 */
-	private function create_new_thread( $message_content ) {
+	private function create_new_thread() {
 		$response = $this->openai_updater->request_wpcom(
 			'/openai-proxy/v1/threads',
+			'POST'
+		);
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+		$response = wp_remote_retrieve_body( $response );
+		$response = json_decode( $response );
+		return $response;
+	}
+
+	public function add_message_to_thread( $thread_id, $message_content ) {
+		$response = $this->openai_updater->request_wpcom(
+			"/openai-proxy/v1/threads/$thread_id/messages",
 			'POST',
 			array(
-				'messages' => array(
-					array(
-						'content' => $message_content,
-						'role' => 'user',
-					),
-				),
-			)
+				'content' => $message_content,
+				'role' => 'user',
+			),
 		);
 
 		if ( is_wp_error( $response ) ) {
